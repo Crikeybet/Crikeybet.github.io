@@ -1,10 +1,84 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>My First Website</title>
+  <title>Match Betting Calculator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      font-family: Arial;
+      background: #f4f4f4;
+      text-align: center;
+      padding: 20px;
+    }
+
+    .calculator {
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      max-width: 400px;
+      margin: auto;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+
+    input {
+      width: 100%;
+      padding: 8px;
+      margin: 8px 0;
+      font-size: 16px;
+    }
+
+    button {
+      padding: 10px;
+      width: 100%;
+      font-size: 16px;
+      background: #2c7be5;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    .result {
+      margin-top: 15px;
+      font-weight: bold;
+    }
+  </style>
 </head>
 <body>
-    <h1>Hello World 🚀</h1>
-    <p>This website works on my PC and iPhone!</p>
+
+  <h1>Matched Betting Calculator</h1>
+
+  <div class="calculator">
+    <input type="number" id="backOdds" placeholder="Back Odds" step="0.01">
+    <input type="number" id="layOdds" placeholder="Lay Odds" step="0.01">
+    <input type="number" id="backStake" placeholder="Back Stake (£)" step="0.01">
+    <input type="number" id="commission" placeholder="Lay Commission (%)" step="0.01">
+
+    <button onclick="calculate()">Calculate</button>
+
+    <div class="result" id="output"></div>
+  </div>
+
+<script>
+function calculate() {
+  let backOdds = parseFloat(document.getElementById("backOdds").value);
+  let layOdds = parseFloat(document.getElementById("layOdds").value);
+  let backStake = parseFloat(document.getElementById("backStake").value);
+  let commission = parseFloat(document.getElementById("commission").value) / 100;
+
+  let layStake = (backOdds * backStake) / (layOdds - (layOdds * commission));
+  let liability = (layOdds - 1) * layStake;
+
+  let backWinProfit = (backOdds - 1) * backStake - liability;
+  let layWinProfit = layStake * (1 - commission) - backStake;
+
+  document.getElementById("output").innerHTML =
+    "Lay Stake: £" + layStake.toFixed(2) + "<br>" +
+    "Liability: £" + liability.toFixed(2) + "<br>" +
+    "Profit if Back Wins: £" + backWinProfit.toFixed(2) + "<br>" +
+    "Profit if Lay Wins: £" + layWinProfit.toFixed(2);
+}
+</script>
+
 </body>
 </html>
