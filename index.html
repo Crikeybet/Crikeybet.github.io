@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Match Betting Calculator</title>
+  <title>Advanced Match Betting Calculator</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     body {
@@ -15,12 +15,12 @@
       background: white;
       padding: 20px;
       border-radius: 10px;
-      max-width: 400px;
+      max-width: 420px;
       margin: auto;
       box-shadow: 0 0 10px rgba(0,0,0,0.1);
     }
 
-    input {
+    input, select {
       width: 100%;
       padding: 8px;
       margin: 8px 0;
@@ -41,36 +41,89 @@
     .result {
       margin-top: 15px;
       font-weight: bold;
+      text-align: left;
     }
   </style>
 </head>
 <body>
 
-  <h1>Matched Betting Calculator</h1>
+<h1>Matched Betting Calculator</h1>
 
-  <div class="calculator">
-    <input type="number" id="backOdds" placeholder="Back Odds" step="0.01">
-    <input type="number" id="layOdds" placeholder="Lay Odds" step="0.01">
-    <input type="number" id="backStake" placeholder="Back Stake (£)" step="0.01">
-    <input type="number" id="commission" placeholder="Lay Commission (%)" step="0.01">
+<div class="calculator">
 
-    <button onclick="calculate()">Calculate</button>
+<select id="mode">
+  <option value="qualifying">Qualifying Bet</option>
+  <option value="snr">Free Bet (SNR)</option>
+  <option value="sr">Free Bet (SR)</option>
+  <option value="riskfree">Risk Free Bet</option>
+</select>
 
-    <div class="result" id="output"></div>
-  </div>
+<input type="number" id="backOdds" placeholder="Back Odds" step="0.01">
+<input type="number" id="layOdds" placeholder="Lay Odds" step="0.01">
+<input type="number" id="stake" placeholder="Stake (£)" step="0.01">
+<input type="number" id="commission" placeholder="Lay Commission (%)" step="0.01">
+
+<button onclick="calculate()">Calculate</button>
+
+<div class="result" id="output"></div>
+
+</div>
 
 <script>
 function calculate() {
+
+  let mode = document.getElementById("mode").value;
   let backOdds = parseFloat(document.getElementById("backOdds").value);
   let layOdds = parseFloat(document.getElementById("layOdds").value);
-  let backStake = parseFloat(document.getElementById("backStake").value);
+  let stake = parseFloat(document.getElementById("stake").value);
   let commission = parseFloat(document.getElementById("commission").value) / 100;
 
-  let layStake = (backOdds * backStake) / (layOdds - (layOdds * commission));
-  let liability = (layOdds - 1) * layStake;
+  let adjustedLayOdds = layOdds - (layOdds * commission);
+  let layStake, liability, backWinProfit, layWinProfit;
 
-  let backWinProfit = (backOdds - 1) * backStake - liability;
-  let layWinProfit = layStake * (1 - commission) - backStake;
+  if(mode === "qualifying") {
+
+    layStake = (backOdds * stake) / adjustedLayOdds;
+    liability = (layOdds - 1) * layStake;
+
+    backWinProfit = (backOdds - 1) * stake - liability;
+    layWinProfit = layStake * (1 - commission) - stake;
+
+  }
+
+  if(mode === "snr") {
+
+    layStake = ((backOdds - 1) * stake) / adjustedLayOdds;
+    liability = (layOdds - 1) * layStake;
+
+    backWinProfit = (backOdds - 1) * stake - liability;
+    layWinProfit = layStake * (1 - commission);
+
+  }
+
+  if(mode === "sr") {
+
+    layStake = (backOdds * stake) / adjustedLayOdds;
+    liability = (layOdds - 1) * layStake;
+
+    backWinProfit = (backOdds * stake - stake) - liability;
+    layWinProfit = layStake * (1 - commission);
+
+  }
+
+  if(mode === "riskfree") {
+
+    layStake = (backOdds * stake) / adjustedLayOdds;
+    liability = (layOdds - 1) * layStake;
+
+    let qualifyingLoss = layStake * (1 - commission) - stake;
+
+    let freeBetValue = ((backOdds - 1) * stake) * 0.8; // rough 80% estimate
+
+    backWinProfit = (backOdds - 1) * stake - liability;
+    layWinProfit = qualifyingLoss + freeBetValue;
+
+  }
 
   document.getElementById("output").innerHTML =
     "Lay Stake: £" + layStake.toFixed(2) + "<br>" +
