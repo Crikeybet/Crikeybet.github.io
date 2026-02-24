@@ -20,7 +20,7 @@
       box-shadow: 0 0 10px rgba(0,0,0,0.1);
     }
 
-    input, select {
+    input, select, button {
       width: 100%;
       padding: 8px;
       margin: 8px 0;
@@ -28,9 +28,6 @@
     }
 
     button {
-      padding: 10px;
-      width: 100%;
-      font-size: 16px;
       background: #2c7be5;
       color: white;
       border: none;
@@ -51,78 +48,69 @@
 
 <div class="calculator">
 
-<select id="mode">
-  <option value="qualifying">Qualifying Bet</option>
-  <option value="snr">Free Bet (SNR)</option>
-  <option value="sr">Free Bet (SR)</option>
-  <option value="riskfree">Risk Free Bet</option>
-</select>
+  <select id="mode">
+    <option value="qualifying">Qualifying Bet</option>
+    <option value="snr">Free Bet (SNR)</option>
+    <option value="sr">Free Bet (SR)</option>
+    <option value="riskfree">Risk Free Bet</option>
+  </select>
 
-<input type="number" id="backOdds" placeholder="Back Odds" step="0.01">
-<input type="number" id="layOdds" placeholder="Lay Odds" step="0.01">
-<input type="number" id="stake" placeholder="Stake (£)" step="0.01">
-<input type="number" id="commission" placeholder="Lay Commission (%)" step="0.01">
+  <input type="number" id="backOdds" placeholder="Back Odds" step="0.01">
+  <input type="number" id="layOdds" placeholder="Lay Odds" step="0.01">
+  <input type="number" id="stake" placeholder="Stake (£)" step="0.01">
+  <input type="number" id="commission" placeholder="Lay Commission (%)" step="0.01">
 
-<button onclick="calculate()">Calculate</button>
+  <div class="result" id="output">Enter values to see results</div>
 
-<div class="result" id="output"></div>
+  <button id="logBet">Log Bet</button>
+  <a href="betlog.html"><button>View Bet Log</button></a>
 
 </div>
 
 <script>
 function calculate() {
-
   let mode = document.getElementById("mode").value;
   let backOdds = parseFloat(document.getElementById("backOdds").value);
   let layOdds = parseFloat(document.getElementById("layOdds").value);
   let stake = parseFloat(document.getElementById("stake").value);
   let commission = parseFloat(document.getElementById("commission").value) / 100;
 
+  if (isNaN(backOdds) || isNaN(layOdds) || isNaN(stake) || isNaN(commission)) {
+      document.getElementById("output").innerHTML = "Enter all fields to see results";
+      return;
+  }
+
   let adjustedLayOdds = layOdds - (layOdds * commission);
   let layStake, liability, backWinProfit, layWinProfit;
 
   if(mode === "qualifying") {
-
     layStake = (backOdds * stake) / adjustedLayOdds;
     liability = (layOdds - 1) * layStake;
-
     backWinProfit = (backOdds - 1) * stake - liability;
     layWinProfit = layStake * (1 - commission) - stake;
-
   }
 
   if(mode === "snr") {
-
     layStake = ((backOdds - 1) * stake) / adjustedLayOdds;
     liability = (layOdds - 1) * layStake;
-
     backWinProfit = (backOdds - 1) * stake - liability;
     layWinProfit = layStake * (1 - commission);
-
   }
 
   if(mode === "sr") {
-
     layStake = (backOdds * stake) / adjustedLayOdds;
     liability = (layOdds - 1) * layStake;
-
     backWinProfit = (backOdds * stake - stake) - liability;
     layWinProfit = layStake * (1 - commission);
-
   }
 
   if(mode === "riskfree") {
-
     layStake = (backOdds * stake) / adjustedLayOdds;
     liability = (layOdds - 1) * layStake;
-
     let qualifyingLoss = layStake * (1 - commission) - stake;
-
     let freeBetValue = ((backOdds - 1) * stake) * 0.8; // rough 80% estimate
-
     backWinProfit = (backOdds - 1) * stake - liability;
     layWinProfit = qualifyingLoss + freeBetValue;
-
   }
 
   document.getElementById("output").innerHTML =
@@ -131,6 +119,41 @@ function calculate() {
     "Profit if Back Wins: £" + backWinProfit.toFixed(2) + "<br>" +
     "Profit if Lay Wins: £" + layWinProfit.toFixed(2);
 }
+
+// Live calculation whenever input changes
+const inputs = document.querySelectorAll("#backOdds, #layOdds, #stake, #commission, #mode");
+inputs.forEach(input => input.addEventListener("input", calculate));
+
+// Log Bet button
+document.getElementById("logBet").addEventListener("click", () => {
+    let backOdds = parseFloat(document.getElementById("backOdds").value);
+    let layOdds = parseFloat(document.getElementById("layOdds").value);
+    let stake = parseFloat(document.getElementById("stake").value);
+    let commission = parseFloat(document.getElementById("commission").value) / 100;
+    let mode = document.getElementById("mode").value;
+    let output = document.getElementById("output").innerHTML;
+
+    if (isNaN(backOdds) || isNaN(layOdds) || isNaN(stake) || isNaN(commission)) {
+        alert("Please fill all fields before logging the bet!");
+        return;
+    }
+
+    const bet = {
+        date: new Date().toLocaleString(),
+        mode,
+        backOdds,
+        layOdds,
+        stake,
+        commission,
+        result: output
+    };
+
+    let bets = JSON.parse(localStorage.getItem("bets")) || [];
+    bets.push(bet);
+    localStorage.setItem("bets", JSON.stringify(bets));
+
+    alert("Bet logged!");
+});
 </script>
 
 </body>
