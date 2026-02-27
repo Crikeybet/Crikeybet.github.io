@@ -46,6 +46,16 @@
 
 <h1>Matched Betting Calculator</h1>
 
+<div id="authSection">
+  <h2>Login / Register</h2>
+  <input type="email" id="email" placeholder="Email">
+  <input type="password" id="password" placeholder="Password">
+  <button id="registerBtn">Register</button>
+  <button id="loginBtn">Login</button>
+  <button id="logoutBtn" style="display:none;">Logout</button>
+  <p id="authMessage"></p>
+</div>
+
 <div class="calculator">
 
   <select id="mode">
@@ -59,6 +69,7 @@
   <input type="number" id="layOdds" placeholder="Lay Odds" step="0.01">
   <input type="number" id="stake" placeholder="Stake (£)" step="0.01">
   <input type="number" id="commission" placeholder="Lay Commission (%)" step="0.01">
+  <input type="number" id="freeBetPercent" placeholder="Free Bet Retention % (e.g. 85)" step="0.1">
 
   <div class="result" id="output">Enter values to see results</div>
 
@@ -67,50 +78,158 @@
 
 </div>
 
-<script>
+<script type="module">
+
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
+
+import {
+  getAuth,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  onAuthStateChanged,
+  signOut
+} from "https://www.gstatic.com/firebasejs/12.9.0/firebase-auth.js";
+
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  serverTimestamp
+} from "https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCY9HlGR-Tt-3pQvQyfaHw6VgtMwIxd6g8",
+  authDomain: "crikeybet-3c0e3.firebaseapp.com",
+  projectId: "crikeybet-3c0e3",
+  storageBucket: "crikeybet-3c0e3.firebasestorage.app",
+  messagingSenderId: "192582085796",
+  appId: "1:192582085796:web:1ddc96584f00769f30ca31"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+let currentUser = null;
+
+// ================= AUTH =================
+
+const emailInput = document.getElementById("email");
+const passwordInput = document.getElementById("password");
+const authMessage = document.getElementById("authMessage");
+const logoutBtn = document.getElementById("logoutBtn");
+
+document.getElementById("registerBtn").addEventListener("click", async () => {
+  try {
+    await createUserWithEmailAndPassword(auth, emailInput.value, passwordInput.value);
+    authMessage.innerText = "Registered!";
+  } catch (error) {
+    authMessage.innerText = error.message;
+  }
+});
+
+document.getElementById("loginBtn").addEventListener("click", async () => {
+  try {
+    await signInWithEmailAndPassword(auth, emailInput.value, passwordInput.value);
+    authMessage.innerText = "Logged in!";
+  } catch (error) {
+    authMessage.innerText = error.message;
+  }
+});
+
+logoutBtn.addEventListener("click", async () => {
+  await signOut(auth);
+});
+
+onAuthStateChanged(auth, (user) => {
+  console.log("Auth state:", user);
+  if (user) {
+    currentUser = user;
+    logoutBtn.style.display = "block";
+    authMessage.innerText = "Logged in as " + user.email;
+  } else {
+    currentUser = null;
+    logoutBtn.style.display = "none";
+    authMessage.innerText = "";
+  }
+});
+
+// ================= CALCULATOR =================
+
+const backOddsInput = document.getElementById("backOdds");
+const layOddsInput = document.getElementById("layOdds");
+const stakeInput = document.getElementById("stake");
+const commissionInput = document.getElementById("commission");
+const output = document.getElementById("output");
+const modeSelect = document.getElementById("mode");
+
 function calculate() {
+
   let mode = document.getElementById("mode").value;
   let backOdds = parseFloat(document.getElementById("backOdds").value);
   let layOdds = parseFloat(document.getElementById("layOdds").value);
   let stake = parseFloat(document.getElementById("stake").value);
   let commission = parseFloat(document.getElementById("commission").value) / 100;
+  let freeBetPercent = parseFloat(document.getElementById("freeBetPercent").value) / 100 || 0.8;
 
-  if (isNaN(backOdds) || isNaN(layOdds) || isNaN(stake) || isNaN(commission)) {
-      document.getElementById("output").innerHTML = "Enter all fields to see results";
-      return;
-  }
+  if (!backOdds || !layOdds || !stake || commission < 0) return;
 
-  let adjustedLayOdds = layOdds - (layOdds * commission);
   let layStake, liability, backWinProfit, layWinProfit;
 
-  if(mode === "qualifying") {
-    layStake = (backOdds * stake) / adjustedLayOdds;
+  // =========================
+  // QUALIFYING BET
+  // =========================
+  if (mode === "qualifying") {
+
+    layStake = (backOdds * stake) / (layOdds - commission);
     liability = (layOdds - 1) * layStake;
+
     backWinProfit = (backOdds - 1) * stake - liability;
     layWinProfit = layStake * (1 - commission) - stake;
   }
 
-  if(mode === "snr") {
-    layStake = ((backOdds - 1) * stake) / adjustedLayOdds;
+  // =========================
+  // FREE BET SNR
+  // =========================
+  if (mode === "snr") {
+
+    layStake = ((backOdds - 1) * stake) / (layOdds - commission);
     liability = (layOdds - 1) * layStake;
+
     backWinProfit = (backOdds - 1) * stake - liability;
     layWinProfit = layStake * (1 - commission);
   }
 
-  if(mode === "sr") {
-    layStake = (backOdds * stake) / adjustedLayOdds;
+  // =========================
+  // FREE BET SR
+  // =========================
+  if (mode === "sr") {
+
+    layStake = (backOdds * stake) / (layOdds - commission);
     liability = (layOdds - 1) * layStake;
+
     backWinProfit = (backOdds * stake - stake) - liability;
     layWinProfit = layStake * (1 - commission);
   }
 
-  if(mode === "riskfree") {
-    layStake = (backOdds * stake) / adjustedLayOdds;
+  // =========================
+  // RISK FREE BET
+  // =========================
+  if (mode === "riskfree") {
+
+    // Qualifying part
+    layStake = (backOdds * stake) / (layOdds - commission);
     liability = (layOdds - 1) * layStake;
+
     let qualifyingLoss = layStake * (1 - commission) - stake;
-    let freeBetValue = ((backOdds - 1) * stake) * 0.8; // rough 80% estimate
+
+    // Estimated SNR conversion
+    let estimatedFreeBetValue = stake * freeBetPercent;
+
     backWinProfit = (backOdds - 1) * stake - liability;
-    layWinProfit = qualifyingLoss + freeBetValue;
+
+    // If back loses
+    layWinProfit = qualifyingLoss + estimatedFreeBetValue;
   }
 
   document.getElementById("output").innerHTML =
@@ -120,41 +239,36 @@ function calculate() {
     "Profit if Lay Wins: £" + layWinProfit.toFixed(2);
 }
 
-// Live calculation whenever input changes
-const inputs = document.querySelectorAll("#backOdds, #layOdds, #stake, #commission, #mode");
-inputs.forEach(input => input.addEventListener("input", calculate));
+document.querySelectorAll("#backOdds, #layOdds, #stake, #commission")
+  .forEach(input => input.addEventListener("input", calculate));
 
-// Log Bet button
-document.getElementById("logBet").addEventListener("click", () => {
-    let backOdds = parseFloat(document.getElementById("backOdds").value);
-    let layOdds = parseFloat(document.getElementById("layOdds").value);
-    let stake = parseFloat(document.getElementById("stake").value);
-    let commission = parseFloat(document.getElementById("commission").value) / 100;
-    let mode = document.getElementById("mode").value;
-    let output = document.getElementById("output").innerHTML;
+// ================= SAVE BET =================
 
-    if (isNaN(backOdds) || isNaN(layOdds) || isNaN(stake) || isNaN(commission)) {
-        alert("Please fill all fields before logging the bet!");
-        return;
-    }
+document.getElementById("logBet").addEventListener("click", async () => {
 
-    const bet = {
-        date: new Date().toLocaleString(),
-        mode,
-        backOdds,
-        layOdds,
-        stake,
-        commission,
-        result: output
-    };
+  if (!currentUser) {
+    alert("You must be logged in to save bets.");
+    return;
+  }
 
-    let bets = JSON.parse(localStorage.getItem("bets")) || [];
-    bets.push(bet);
-    localStorage.setItem("bets", JSON.stringify(bets));
+  try {
+    await addDoc(collection(db, "bets"), {
+      userId: currentUser.uid,
+      mode: modeSelect.value,
+      backOdds: parseFloat(backOddsInput.value),
+      layOdds: parseFloat(layOddsInput.value),
+      stake: parseFloat(stakeInput.value),
+      commission: parseFloat(commissionInput.value) / 100,
+      createdAt: serverTimestamp()
+    });
 
-    alert("Bet logged!");
+    alert("Bet saved successfully 🔥");
+  } catch (error) {
+    console.error(error);
+    alert("Error saving bet");
+  }
 });
-</script>
-
+  
+  </script>
 </body>
 </html>
