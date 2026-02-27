@@ -1,101 +1,82 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Advanced Match Betting Calculator</title>
+  <title>Bet Log</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     body {
       font-family: Arial;
       background: #f4f4f4;
-      text-align: center;
       padding: 20px;
+      text-align: center;
     }
 
-    .calculator {
+    .container {
       background: white;
       padding: 20px;
       border-radius: 10px;
-      max-width: 420px;
+      max-width: 700px;
       margin: auto;
       box-shadow: 0 0 10px rgba(0,0,0,0.1);
     }
 
-    input, select, button {
+    table {
       width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+
+    th, td {
       padding: 8px;
-      margin: 8px 0;
-      font-size: 16px;
+      border-bottom: 1px solid #ddd;
+      font-size: 14px;
+    }
+
+    th {
+      background: #2c7be5;
+      color: white;
     }
 
     button {
+      padding: 8px 12px;
       background: #2c7be5;
       color: white;
       border: none;
       border-radius: 5px;
       cursor: pointer;
-    }
-
-    .result {
       margin-top: 15px;
-      font-weight: bold;
-      text-align: left;
     }
   </style>
 </head>
 <body>
 
-<h1>Matched Betting Calculator</h1>
+<div class="container">
+  <h1>Your Bet Log</h1>
+  <h2 id="totalProfit">Total Profit: £0.00</h2>
+  <button onclick="window.location.href='index.html'">⬅ Back to Calculator</button>
 
-<div id="authSection">
-  <h2>Login / Register</h2>
-  <input type="email" id="email" placeholder="Email">
-  <input type="password" id="password" placeholder="Password">
-  <button id="registerBtn">Register</button>
-  <button id="loginBtn">Login</button>
-  <button id="logoutBtn" style="display:none;">Logout</button>
-  <p id="authMessage"></p>
-</div>
-
-<div class="calculator">
-
-  <select id="mode">
-    <option value="qualifying">Qualifying Bet</option>
-    <option value="snr">Free Bet (SNR)</option>
-    <option value="sr">Free Bet (SR)</option>
-    <option value="riskfree">Risk Free Bet</option>
-  </select>
-
-  <input type="number" id="backOdds" placeholder="Back Odds" step="0.01">
-  <input type="number" id="layOdds" placeholder="Lay Odds" step="0.01">
-  <input type="number" id="stake" placeholder="Stake (£)" step="0.01">
-  <input type="number" id="commission" placeholder="Lay Commission (%)" step="0.01">
-  <input type="number" id="freeBetPercent" placeholder="Free Bet Retention % (e.g. 85)" step="0.1">
-
-  <div class="result" id="output">Enter values to see results</div>
-
-  <button id="logBet">Log Bet</button>
-  <a href="betlog.html"><button>View Bet Log</button></a>
-
+  <table id="betTable">
+    <thead>
+      <tr>
+        <th>Mode</th>
+        <th>Back Odds</th>
+        <th>Lay Odds</th>
+        <th>Stake</th>
+        <th>Commission</th>
+        <th>Profit</th>
+        <th>Date</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
 </div>
 
 <script type="module">
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
-
-import {
-  getAuth,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  onAuthStateChanged,
-  signOut
-} from "https://www.gstatic.com/firebasejs/12.9.0/firebase-auth.js";
-
-import {
-  getFirestore,
-  collection,
-  addDoc,
-  serverTimestamp
-} from "https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js";
+import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-auth.js";
+import { getFirestore, collection, query, where, onSnapshot, orderBy } 
+from "https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCY9HlGR-Tt-3pQvQyfaHw6VgtMwIxd6g8",
@@ -110,165 +91,72 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-let currentUser = null;
-
-// ================= AUTH =================
-
-const emailInput = document.getElementById("email");
-const passwordInput = document.getElementById("password");
-const authMessage = document.getElementById("authMessage");
-const logoutBtn = document.getElementById("logoutBtn");
-
-document.getElementById("registerBtn").addEventListener("click", async () => {
-  try {
-    await createUserWithEmailAndPassword(auth, emailInput.value, passwordInput.value);
-    authMessage.innerText = "Registered!";
-  } catch (error) {
-    authMessage.innerText = error.message;
-  }
-});
-
-document.getElementById("loginBtn").addEventListener("click", async () => {
-  try {
-    await signInWithEmailAndPassword(auth, emailInput.value, passwordInput.value);
-    authMessage.innerText = "Logged in!";
-  } catch (error) {
-    authMessage.innerText = error.message;
-  }
-});
-
-logoutBtn.addEventListener("click", async () => {
-  await signOut(auth);
-});
+const tableBody = document.querySelector("#betTable tbody");
 
 onAuthStateChanged(auth, (user) => {
-  console.log("Auth state:", user);
-  if (user) {
-    currentUser = user;
-    logoutBtn.style.display = "block";
-    authMessage.innerText = "Logged in as " + user.email;
-  } else {
-    currentUser = null;
-    logoutBtn.style.display = "none";
-    authMessage.innerText = "";
-  }
-});
 
-// ================= CALCULATOR =================
-
-const backOddsInput = document.getElementById("backOdds");
-const layOddsInput = document.getElementById("layOdds");
-const stakeInput = document.getElementById("stake");
-const commissionInput = document.getElementById("commission");
-const output = document.getElementById("output");
-const modeSelect = document.getElementById("mode");
-
-function calculate() {
-
-  let mode = document.getElementById("mode").value;
-  let backOdds = parseFloat(document.getElementById("backOdds").value);
-  let layOdds = parseFloat(document.getElementById("layOdds").value);
-  let stake = parseFloat(document.getElementById("stake").value);
-  let commission = parseFloat(document.getElementById("commission").value) / 100;
-  let freeBetPercent = parseFloat(document.getElementById("freeBetPercent").value) / 100 || 0.8;
-
-  if (!backOdds || !layOdds || !stake || commission < 0) return;
-
-  let layStake, liability, backWinProfit, layWinProfit;
-
-  // =========================
-  // QUALIFYING BET
-  // =========================
-  if (mode === "qualifying") {
-
-    layStake = (backOdds * stake) / (layOdds - commission);
-    liability = (layOdds - 1) * layStake;
-
-    backWinProfit = (backOdds - 1) * stake - liability;
-    layWinProfit = layStake * (1 - commission) - stake;
-  }
-
-  // =========================
-  // FREE BET SNR
-  // =========================
-  if (mode === "snr") {
-
-    layStake = ((backOdds - 1) * stake) / (layOdds - commission);
-    liability = (layOdds - 1) * layStake;
-
-    backWinProfit = (backOdds - 1) * stake - liability;
-    layWinProfit = layStake * (1 - commission);
-  }
-
-  // =========================
-  // FREE BET SR
-  // =========================
-  if (mode === "sr") {
-
-    layStake = (backOdds * stake) / (layOdds - commission);
-    liability = (layOdds - 1) * layStake;
-
-    backWinProfit = (backOdds * stake - stake) - liability;
-    layWinProfit = layStake * (1 - commission);
-  }
-
-  // =========================
-  // RISK FREE BET
-  // =========================
-  if (mode === "riskfree") {
-
-    // Qualifying part
-    layStake = (backOdds * stake) / (layOdds - commission);
-    liability = (layOdds - 1) * layStake;
-
-    let qualifyingLoss = layStake * (1 - commission) - stake;
-
-    // Estimated SNR conversion
-    let estimatedFreeBetValue = stake * freeBetPercent;
-
-    backWinProfit = (backOdds - 1) * stake - liability;
-
-    // If back loses
-    layWinProfit = qualifyingLoss + estimatedFreeBetValue;
-  }
-
-  document.getElementById("output").innerHTML =
-    "Lay Stake: £" + layStake.toFixed(2) + "<br>" +
-    "Liability: £" + liability.toFixed(2) + "<br>" +
-    "Profit if Back Wins: £" + backWinProfit.toFixed(2) + "<br>" +
-    "Profit if Lay Wins: £" + layWinProfit.toFixed(2);
-}
-
-document.querySelectorAll("#backOdds, #layOdds, #stake, #commission")
-  .forEach(input => input.addEventListener("input", calculate));
-
-// ================= SAVE BET =================
-
-document.getElementById("logBet").addEventListener("click", async () => {
-
-  if (!currentUser) {
-    alert("You must be logged in to save bets.");
+  if (!user) {
+    alert("You must be logged in.");
+    window.location.href = "index.html";
     return;
   }
 
-  try {
-    await addDoc(collection(db, "bets"), {
-      userId: currentUser.uid,
-      mode: modeSelect.value,
-      backOdds: parseFloat(backOddsInput.value),
-      layOdds: parseFloat(layOddsInput.value),
-      stake: parseFloat(stakeInput.value),
-      commission: parseFloat(commissionInput.value) / 100,
-      createdAt: serverTimestamp()
-    });
+  const q = query(
+    collection(db, "bets"),
+    where("userId", "==", user.uid),
+    orderBy("createdAt", "desc")
+  );
 
-    alert("Bet saved successfully 🔥");
-  } catch (error) {
-    console.error(error);
-    alert("Error saving bet");
-  }
+ onSnapshot(q, (snapshot) => {
+
+  tableBody.innerHTML = "";
+  let totalProfit = 0;
+
+  snapshot.forEach(doc => {
+    const bet = doc.data();
+
+    const backOdds = bet.backOdds;
+    const layOdds = bet.layOdds;
+    const stake = bet.stake;
+    const commission = bet.commission;
+
+    // Recalculate profit (qualifying style default)
+    const adjustedLayOdds = layOdds - (layOdds * commission);
+    const layStake = (backOdds * stake) / adjustedLayOdds;
+    const liability = (layOdds - 1) * layStake;
+    const profit = (backOdds - 1) * stake - liability;
+
+    totalProfit += profit;
+
+    const profitColour = profit >= 0 ? "green" : "red";
+
+    const row = `
+      <tr>
+        <td>${bet.mode}</td>
+        <td>${backOdds}</td>
+        <td>${layOdds}</td>
+        <td>£${stake}</td>
+        <td>${(commission * 100).toFixed(2)}%</td>
+        <td style="color:${profitColour}; font-weight:bold;">
+          £${profit.toFixed(2)}
+        </td>
+        <td>${bet.createdAt?.toDate().toLocaleString() || "-"}</td>
+      </tr>
+    `;
+
+    tableBody.innerHTML += row;
+  });
+
+  const totalElement = document.getElementById("totalProfit");
+  const totalColour = totalProfit >= 0 ? "green" : "red";
+
+  totalElement.innerHTML =
+    `Total Profit: <span style="color:${totalColour};">£${totalProfit.toFixed(2)}</span>`;
 });
-  
-  </script>
+
+});
+
+</script>
+
 </body>
 </html>
