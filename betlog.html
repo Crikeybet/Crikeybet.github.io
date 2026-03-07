@@ -4,15 +4,81 @@
   <title>Bet Log</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
-    body { font-family: Arial; background:#f4f4f4; padding:20px; text-align:center; }
-    .container { background:white; padding:20px; border-radius:10px; max-width:900px; margin:auto; box-shadow:0 0 10px rgba(0,0,0,0.1); }
-    table { width:100%; border-collapse:collapse; margin-top:15px; }
-    th, td { border-bottom:1px solid #ddd; padding:10px; font-size:14px; }
-    th { background:#2c7be5; color:white; }
-    button { padding:6px 10px; margin:2px; background:#2c7be5; color:white; border:none; border-radius:5px; cursor:pointer; }
-    .green { color:green; font-weight:bold; }
-    .red { color:red; font-weight:bold; }
-    .small { font-size:12px; opacity:0.8; }
+    body {
+      font-family: Arial;
+      background: #f4f4f4;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .container {
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      max-width: 1000px;
+      margin: auto;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 15px;
+    }
+
+    th, td {
+      border-bottom: 1px solid #ddd;
+      padding: 10px;
+      font-size: 14px;
+      text-align: center;
+      vertical-align: top;
+    }
+
+    th {
+      background: #2c7be5;
+      color: white;
+    }
+
+    button {
+      padding: 6px 10px;
+      margin: 2px;
+      background: #2c7be5;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    .green {
+      color: green;
+      font-weight: bold;
+    }
+
+    .red {
+      color: red;
+      font-weight: bold;
+    }
+
+    .small {
+      font-size: 12px;
+      opacity: 0.8;
+    }
+
+    .outcome-list {
+      text-align: left;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .multilay-badge {
+      display: inline-block;
+      background: #6c757d;
+      color: white;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 12px;
+      margin-top: 4px;
+    }
   </style>
 </head>
 <body>
@@ -21,17 +87,13 @@
   <h1>Your Bet Log</h1>
   <h2 id="totalProfit">Total Profit: £0.00</h2>
 
-  <p class="small">
-    If a Risk Free bet is settled as <b>Lay Won</b>, it becomes eligible to attach a Free Bet (SNR) in the calculator dropdown.
-  </p>
-
   <table id="betTable">
     <thead>
       <tr>
         <th>Mode</th>
         <th>Stake</th>
         <th>Back</th>
-        <th>Lay</th>
+        <th>Lay / Details</th>
         <th>Result</th>
         <th>Profit</th>
         <th>Actions</th>
@@ -84,7 +146,6 @@ onAuthStateChanged(auth, (user) => {
     return;
   }
 
-  // NOTE: you already created the composite index for userId + createdAt
   const q = query(
     collection(db, "bets"),
     where("userId", "==", user.uid),
@@ -106,29 +167,82 @@ onAuthStateChanged(auth, (user) => {
       const result = bet.result || "pending";
       const linkedTo = bet.linkedTo || "";
 
-      // Pending => show Back/Lay buttons
-      // Settled => show Undo button
+      // MULTI-LAY DISPLAY
+      if (bet.mode === "multilay") {
+        let outcomesHtml = `<div class="outcome-list">`;
+
+        if (Array.isArray(bet.outcomes)) {
+          bet.outcomes.forEach((outcome, index) => {
+            outcomesHtml += `
+              <strong>${index + 1}. ${outcome.name}</strong><br>
+              Lay Odds: ${Number(outcome.layOdds).toFixed(2)}<br>
+              Commission: ${((Number(outcome.commissionRate || 0)) * 100).toFixed(2)}%<br>
+              Lay Stake: £${Number(outcome.layStake || 0).toFixed(2)}<br>
+              Liability: £${Number(outcome.liability || 0).toFixed(2)}<br>
+              Exposure: £${Number(outcome.exposure || 0).toFixed(2)}<br><br>
+            `;
+          });
+        }
+
+        outcomesHtml += `</div>`;
+
+        tableBody.innerHTML += `
+          <tr>
+            <td>
+              Multi-Lay
+              <div class="multilay-badge">Settled</div>
+            </td>
+            <td>£${Number(bet.stake || 0).toFixed(2)}</td>
+            <td>${Number(bet.backOdds || 0).toFixed(2)}</td>
+            <td>
+              <div class="outcome-list">
+                <strong>Total Liability:</strong> £${Number(bet.totalLiability || 0).toFixed(2)}<br>
+                <strong>Total Lay Stakes:</strong> £${Number(bet.totalLayStake || 0).toFixed(2)}<br><br>
+                ${outcomesHtml}
+              </div>
+            </td>
+            <td>settled</td>
+            <td><span class="${profitClass}">£${profit.toFixed(2)}</span></td>
+            <td>
+              <button onclick="deleteBet('${id}')">Delete</button>
+            </td>
+            <td class="small">-</td>
+          </tr>
+        `;
+        return;
+      }
+
+      // NORMAL BETS
       const actions = (result === "pending")
-  ? `
-    <button onclick="settleBet('${id}', 'back')">Back Won</button>
-    <button onclick="settleBet('${id}', 'lay')">Lay Won</button>
-    <button onclick="deleteBet('${id}')">Delete</button>
-  `
-  : `
-    <button onclick="undoBet('${id}')">Undo</button>
-    <button onclick="deleteBet('${id}')">Delete</button>
-  `;
+        ? `
+          <button onclick="settleBet('${id}', 'back')">Back Won</button>
+          <button onclick="settleBet('${id}', 'lay')">Lay Won</button>
+          <button onclick="deleteBet('${id}')">Delete</button>
+        `
+        : `
+          <button onclick="undoBet('${id}')">Undo</button>
+          <button onclick="deleteBet('${id}')">Delete</button>
+        `;
+
+      let layDetails = bet.layOdds ?? "";
+
+      if (bet.mode === "riskfree" && bet.freeBetChildId) {
+        layDetails = `
+          ${bet.layOdds ?? ""}<br>
+          <span class="small">Free bet attached: ${bet.freeBetChildId}</span>
+        `;
+      }
 
       tableBody.innerHTML += `
         <tr>
           <td>${bet.mode || ""}</td>
-          <td>£${(bet.stake ?? "").toString()}</td>
+          <td>£${Number(bet.stake || 0).toFixed(2)}</td>
           <td>${bet.backOdds ?? ""}</td>
-          <td>${bet.layOdds ?? ""}</td>
+          <td>${layDetails}</td>
           <td>${result}</td>
           <td><span class="${profitClass}">£${profit.toFixed(2)}</span></td>
           <td>${actions}</td>
-          <td class="small">${linkedTo}</td>
+          <td class="small">${linkedTo || "-"}</td>
         </tr>
       `;
     });
@@ -138,7 +252,7 @@ onAuthStateChanged(auth, (user) => {
   });
 });
 
-// 🔥 Settle bet (Back Won / Lay Won)
+// BACK WON / LAY WON
 window.settleBet = async function(betId, outcome) {
   try {
     const betRef = doc(db, "bets", betId);
@@ -155,7 +269,6 @@ window.settleBet = async function(betId, outcome) {
 
     const finalProfit = (outcome === "back") ? backProfit : layProfit;
 
-    // If riskfree loses (lay), make it eligible for attaching a free bet in calculator dropdown
     const eligibleUpdate = (bet.mode === "riskfree" && outcome === "lay")
       ? { eligibleForFreeBet: true }
       : { eligibleForFreeBet: false };
@@ -174,23 +287,8 @@ window.settleBet = async function(betId, outcome) {
     alert("Failed to settle bet. Check console.");
   }
 };
-window.deleteBet = async function(betId) {
-  try {
-    const ok = confirm("Delete this bet? This cannot be undone.");
-    if (!ok) return;
 
-    const betRef = doc(db, "bets", betId);
-    await deleteDoc(betRef);
-  } catch (err) {
-    console.error("deleteBet failed:", err);
-    alert("Failed to delete bet. Check console.");
-  }
-};
-
-// 🔥 Undo bet (go back to pending + default pending profit)
-// Default pending profit:
-// - riskfree => backProfit
-// - others  => min(backProfit, layProfit)
+// UNDO
 window.undoBet = async function(betId) {
   try {
     const betRef = doc(db, "bets", betId);
@@ -217,6 +315,19 @@ window.undoBet = async function(betId) {
   } catch (err) {
     console.error("undoBet failed:", err);
     alert("Failed to undo bet. Check console.");
+  }
+};
+
+// DELETE
+window.deleteBet = async function(betId) {
+  try {
+    const ok = confirm("Delete this bet? This cannot be undone.");
+    if (!ok) return;
+
+    await deleteDoc(doc(db, "bets", betId));
+  } catch (err) {
+    console.error("deleteBet failed:", err);
+    alert(err?.message || "Failed to delete bet. Check console.");
   }
 };
 </script>
