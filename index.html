@@ -4,42 +4,12 @@
   <title>Advanced Match Betting Calculator</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
-    body {
-      font-family: Arial;
-      background: #f4f4f4;
-      text-align: center;
-      padding: 20px;
-    }
-
-    .calculator {
-      background: white;
-      padding: 20px;
-      border-radius: 10px;
-      max-width: 420px;
-      margin: auto;
-      box-shadow: 0 0 10px rgba(0,0,0,0.1);
-    }
-
-    input, select, button {
-      width: 100%;
-      padding: 8px;
-      margin: 8px 0;
-      font-size: 16px;
-    }
-
-    button {
-      background: #2c7be5;
-      color: white;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-    }
-
-    .result {
-      margin-top: 15px;
-      font-weight: bold;
-      text-align: left;
-    }
+    body { font-family: Arial; background:#f4f4f4; text-align:center; padding:20px; }
+    .calculator { background:white; padding:20px; border-radius:10px; max-width:420px; margin:auto; box-shadow:0 0 10px rgba(0,0,0,0.1); }
+    input, select, button { width:100%; padding:8px; margin:8px 0; font-size:16px; }
+    button { background:#2c7be5; color:white; border:none; border-radius:5px; cursor:pointer; }
+    .result { margin-top:15px; font-weight:bold; text-align:left; }
+    .small { font-size:12px; opacity:0.8; text-align:left; }
   </style>
 </head>
 <body>
@@ -71,15 +41,22 @@
   <input type="number" id="commission" placeholder="Lay Commission (%)" step="0.01">
   <input type="number" id="freeBetPercent" placeholder="Free Bet Retention % (e.g. 85)" step="0.1">
 
+  <!-- Dropdown only appears in SNR mode -->
+  <select id="attachTo" style="display:none;">
+    <option value="">Attach to eligible Risk Free bet (optional)</option>
+  </select>
+  <div class="small" id="attachHelp" style="display:none;">
+    Only Risk Free bets settled as <b>Lay Won</b> show here (eligible for free bet).
+  </div>
+
   <div class="result" id="output">Enter values to see results</div>
 
   <button id="logBet">Log Bet</button>
-  <a href="betlog.html"><button>View Bet Log</button></a>
+  <a href="betlog.html"><button type="button">View Bet Log</button></a>
 
 </div>
 
 <script type="module">
-
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
 
 import {
@@ -94,7 +71,13 @@ import {
   getFirestore,
   collection,
   addDoc,
-  serverTimestamp
+  serverTimestamp,
+  query,
+  where,
+  onSnapshot,
+  doc,
+  getDoc,
+  updateDoc
 } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -111,6 +94,10 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 let currentUser = null;
+
+// latest calculated profits
+let lastBackProfit = 0;
+let lastLayProfit = 0;
 
 // ================= AUTH =================
 
@@ -142,11 +129,11 @@ logoutBtn.addEventListener("click", async () => {
 });
 
 onAuthStateChanged(auth, (user) => {
-  console.log("Auth state:", user);
   if (user) {
     currentUser = user;
     logoutBtn.style.display = "block";
     authMessage.innerText = "Logged in as " + user.email;
+    startEligibleRiskFreeListener();
   } else {
     currentUser = null;
     logoutBtn.style.display = "none";
@@ -154,121 +141,194 @@ onAuthStateChanged(auth, (user) => {
   }
 });
 
+// ================= UI ELEMENTS =================
+
+const modeSelect = document.getElementById("mode");
+const attachSelect = document.getElementById("attachTo");
+const attachHelp = document.getElementById("attachHelp");
+
+modeSelect.addEventListener("change", () => {
+  if (modeSelect.value === "snr") {
+    attachSelect.style.display = "block";
+    attachHelp.style.display = "block";
+  } else {
+    attachSelect.style.display = "none";
+    attachHelp.style.display = "none";
+    attachSelect.value = "";
+  }
+  calculate();
+});
+
+// ================= ELIGIBLE RISKFREE DROPDOWN =================
+
+let unsubscribeEligible = null;
+
+function startEligibleRiskFreeListener() {
+  if (!currentUser) return;
+  if (unsubscribeEligible) unsubscribeEligible();
+
+  const q = query(
+    collection(db, "bets"),
+    where("userId", "==", currentUser.uid),
+    where("mode", "==", "riskfree"),
+    where("eligibleForFreeBet", "==", true)
+  );
+
+  unsubscribeEligible = onSnapshot(q, (snapshot) => {
+    attachSelect.innerHTML = `<option value="">Attach to eligible Risk Free bet (optional)</option>`;
+
+    snapshot.forEach((docSnap) => {
+      const b = docSnap.data();
+      const opt = document.createElement("option");
+      opt.value = docSnap.id;
+      opt.textContent = `Risk Free £${b.stake} @ ${b.backOdds} (ID: ${docSnap.id.slice(0,6)}...)`;
+      attachSelect.appendChild(opt);
+    });
+  });
+}
+
 // ================= CALCULATOR =================
 
-const backOddsInput = document.getElementById("backOdds");
-const layOddsInput = document.getElementById("layOdds");
-const stakeInput = document.getElementById("stake");
-const commissionInput = document.getElementById("commission");
-const output = document.getElementById("output");
-const modeSelect = document.getElementById("mode");
-
 function calculate() {
+  const mode = modeSelect.value;
 
-  let mode = document.getElementById("mode").value;
-  let backOdds = parseFloat(document.getElementById("backOdds").value);
-  let layOdds = parseFloat(document.getElementById("layOdds").value);
-  let stake = parseFloat(document.getElementById("stake").value);
-  let commission = parseFloat(document.getElementById("commission").value) / 100;
-  let freeBetPercent = parseFloat(document.getElementById("freeBetPercent").value) / 100 || 0.8;
+  const backOdds = parseFloat(document.getElementById("backOdds").value);
+  const layOdds = parseFloat(document.getElementById("layOdds").value);
+  const stake = parseFloat(document.getElementById("stake").value);
 
-  if (!backOdds || !layOdds || !stake || commission < 0) return;
+  const commissionInput = parseFloat(document.getElementById("commission").value);
+  const commission = (isNaN(commissionInput) ? 0 : commissionInput) / 100;
 
-  let layStake, liability, backWinProfit, layWinProfit;
+  const freeBetPercentInput = parseFloat(document.getElementById("freeBetPercent").value);
+  const freeBetPercent = isNaN(freeBetPercentInput) ? 0.8 : freeBetPercentInput / 100;
 
-  // =========================
-  // QUALIFYING BET
-  // =========================
+  const output = document.getElementById("output");
+
+  if (isNaN(backOdds) || isNaN(layOdds) || isNaN(stake)) {
+    output.innerHTML = "Enter values to see results";
+    lastBackProfit = 0;
+    lastLayProfit = 0;
+    return;
+  }
+
+  let layStake = 0, liability = 0, backWinProfit = 0, layWinProfit = 0;
+
+  // QUALIFYING
   if (mode === "qualifying") {
-
     layStake = (backOdds * stake) / (layOdds - commission);
     liability = (layOdds - 1) * layStake;
-
     backWinProfit = (backOdds - 1) * stake - liability;
     layWinProfit = layStake * (1 - commission) - stake;
   }
 
-  // =========================
   // FREE BET SNR
-  // =========================
   if (mode === "snr") {
-
     layStake = ((backOdds - 1) * stake) / (layOdds - commission);
     liability = (layOdds - 1) * layStake;
-
     backWinProfit = (backOdds - 1) * stake - liability;
     layWinProfit = layStake * (1 - commission);
   }
 
-  // =========================
   // FREE BET SR
-  // =========================
   if (mode === "sr") {
-
     layStake = (backOdds * stake) / (layOdds - commission);
     liability = (layOdds - 1) * layStake;
-
     backWinProfit = (backOdds * stake - stake) - liability;
     layWinProfit = layStake * (1 - commission);
   }
 
-  // =========================
-  // RISK FREE BET
-  // =========================
+  // RISK FREE (your custom formula)
   if (mode === "riskfree") {
-
-    // Qualifying part
-    layStake = (backOdds * stake) / (layOdds - commission);
+    layStake = ((backOdds / layOdds) * stake * layOdds - stake * freeBetPercent) / layOdds;
     liability = (layOdds - 1) * layStake;
 
-    let qualifyingLoss = layStake * (1 - commission) - stake;
+    const qualifyingLoss = layStake * (1 - commission) - stake;
 
-    // Estimated SNR conversion
-    let estimatedFreeBetValue = stake * freeBetPercent;
-
-    backWinProfit = (backOdds - 1) * stake - liability;
-
-    // If back loses
-    layWinProfit = qualifyingLoss + estimatedFreeBetValue;
+    backWinProfit = (stake * (backOdds - 1) - layStake * (layOdds - 1));
+    layWinProfit = qualifyingLoss; // keep as qualifying loss only
   }
 
-  document.getElementById("output").innerHTML =
+  lastBackProfit = backWinProfit;
+  lastLayProfit = layWinProfit;
+
+  output.innerHTML =
     "Lay Stake: £" + layStake.toFixed(2) + "<br>" +
     "Liability: £" + liability.toFixed(2) + "<br>" +
     "Profit if Back Wins: £" + backWinProfit.toFixed(2) + "<br>" +
     "Profit if Lay Wins: £" + layWinProfit.toFixed(2);
 }
 
-document.querySelectorAll("#backOdds, #layOdds, #stake, #commission")
+document.querySelectorAll("#backOdds, #layOdds, #stake, #commission, #freeBetPercent, #mode")
   .forEach(input => input.addEventListener("input", calculate));
 
 // ================= SAVE BET =================
 
 document.getElementById("logBet").addEventListener("click", async () => {
-
   if (!currentUser) {
-    alert("You must be logged in to save bets.");
+    alert("You must be logged in.");
     return;
   }
 
-  try {
-    await addDoc(collection(db, "bets"), {
-      userId: currentUser.uid,
-      mode: modeSelect.value,
-      backOdds: parseFloat(backOddsInput.value),
-      layOdds: parseFloat(layOddsInput.value),
-      stake: parseFloat(stakeInput.value),
-      commission: parseFloat(commissionInput.value) / 100,
-      createdAt: serverTimestamp()
-    });
+  const mode = modeSelect.value;
 
-    alert("Bet saved successfully 🔥");
+  const betData = {
+    userId: currentUser.uid,
+    mode: mode,
+    backOdds: parseFloat(document.getElementById("backOdds").value),
+    layOdds: parseFloat(document.getElementById("layOdds").value),
+    stake: parseFloat(document.getElementById("stake").value),
+    commission: parseFloat(document.getElementById("commission").value) / 100 || 0,
+    backProfit: lastBackProfit,
+    layProfit: lastLayProfit,
+    result: "pending",
+    profit: (mode === "riskfree")
+      ? lastBackProfit
+      : Math.min(lastBackProfit, lastLayProfit),
+    createdAt: serverTimestamp(),
+    linkedTo: null,
+    eligibleForFreeBet: false
+  };
+
+  // If SNR and dropdown selected, link to riskfree parent
+  let parentId = null;
+  if (mode === "snr") {
+    parentId = attachSelect.value || null;
+    betData.linkedTo = parentId;
+
+    // If attached to parent, this is a free bet conversion -> we can settle it immediately
+    if (parentId) {
+      betData.result = "settled";
+      betData.profit = lastLayProfit; // guaranteed for SNR
+    }
+  }
+
+  try {
+    const newRef = await addDoc(collection(db, "bets"), betData);
+
+    // If attached SNR: DO NOT change parent profit. Only store child ID + remove eligibility.
+    if (mode === "snr" && parentId) {
+      const parentRef = doc(db, "bets", parentId);
+      const parentSnap = await getDoc(parentRef);
+
+      if (parentSnap.exists()) {
+        await updateDoc(parentRef, {
+          eligibleForFreeBet: false,
+          freeBetChildId: newRef.id
+        });
+        alert("Free bet attached ✅ (Parent profit unchanged)");
+      } else {
+        alert("Parent bet not found. Free bet saved but not attached.");
+      }
+    } else {
+      alert("Bet saved ✅ Now settle it in Bet Log.");
+    }
+
   } catch (error) {
     console.error(error);
     alert("Error saving bet");
   }
 });
-  
-  </script>
+</script>
+
 </body>
 </html>
