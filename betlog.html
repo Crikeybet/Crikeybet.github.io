@@ -4,48 +4,15 @@
   <title>Bet Log</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
-    body {
-      font-family: Arial;
-      background: #f4f4f4;
-      padding: 20px;
-      text-align: center;
-    }
-
-    .container {
-      background: white;
-      padding: 20px;
-      border-radius: 10px;
-      max-width: 700px;
-      margin: auto;
-      box-shadow: 0 0 10px rgba(0,0,0,0.1);
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 20px;
-    }
-
-    th, td {
-      padding: 8px;
-      border-bottom: 1px solid #ddd;
-      font-size: 14px;
-    }
-
-    th {
-      background: #2c7be5;
-      color: white;
-    }
-
-    button {
-      padding: 8px 12px;
-      background: #2c7be5;
-      color: white;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-      margin-top: 15px;
-    }
+    body { font-family: Arial; background:#f4f4f4; padding:20px; text-align:center; }
+    .container { background:white; padding:20px; border-radius:10px; max-width:900px; margin:auto; box-shadow:0 0 10px rgba(0,0,0,0.1); }
+    table { width:100%; border-collapse:collapse; margin-top:15px; }
+    th, td { border-bottom:1px solid #ddd; padding:10px; font-size:14px; }
+    th { background:#2c7be5; color:white; }
+    button { padding:6px 10px; margin:2px; background:#2c7be5; color:white; border:none; border-radius:5px; cursor:pointer; }
+    .green { color:green; font-weight:bold; }
+    .red { color:red; font-weight:bold; }
+    .small { font-size:12px; opacity:0.8; }
   </style>
 </head>
 <body>
@@ -53,30 +20,46 @@
 <div class="container">
   <h1>Your Bet Log</h1>
   <h2 id="totalProfit">Total Profit: £0.00</h2>
-  <button onclick="window.location.href='index.html'">⬅ Back to Calculator</button>
+
+  <p class="small">
+    If a Risk Free bet is settled as <b>Lay Won</b>, it becomes eligible to attach a Free Bet (SNR) in the calculator dropdown.
+  </p>
 
   <table id="betTable">
     <thead>
       <tr>
         <th>Mode</th>
-        <th>Back Odds</th>
-        <th>Lay Odds</th>
         <th>Stake</th>
-        <th>Commission</th>
+        <th>Back</th>
+        <th>Lay</th>
+        <th>Result</th>
         <th>Profit</th>
-        <th>Date</th>
+        <th>Actions</th>
+        <th>Linked To</th>
       </tr>
     </thead>
     <tbody></tbody>
   </table>
+
+  <br>
+  <a href="index.html"><button type="button">Back to Calculator</button></a>
 </div>
 
 <script type="module">
-
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-auth.js";
-import { getFirestore, collection, query, where, onSnapshot, orderBy } 
-from "https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js";
+import {
+  getFirestore,
+  collection,
+  query,
+  where,
+  onSnapshot,
+  orderBy,
+  doc,
+  getDoc,
+  updateDoc,
+  deleteDoc
+} from "https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCY9HlGR-Tt-3pQvQyfaHw6VgtMwIxd6g8",
@@ -92,70 +75,150 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 const tableBody = document.querySelector("#betTable tbody");
+const totalProfitEl = document.getElementById("totalProfit");
 
 onAuthStateChanged(auth, (user) => {
-
   if (!user) {
     alert("You must be logged in.");
     window.location.href = "index.html";
     return;
   }
 
+  // NOTE: you already created the composite index for userId + createdAt
   const q = query(
     collection(db, "bets"),
     where("userId", "==", user.uid),
     orderBy("createdAt", "desc")
   );
 
- onSnapshot(q, (snapshot) => {
+  onSnapshot(q, (snapshot) => {
+    tableBody.innerHTML = "";
+    let totalProfit = 0;
 
-  tableBody.innerHTML = "";
-  let totalProfit = 0;
+    snapshot.forEach((docSnap) => {
+      const bet = docSnap.data();
+      const id = docSnap.id;
 
-  snapshot.forEach(doc => {
-    const bet = doc.data();
+      const profit = Number(bet.profit || 0);
+      totalProfit += profit;
 
-    const backOdds = bet.backOdds;
-    const layOdds = bet.layOdds;
-    const stake = bet.stake;
-    const commission = bet.commission;
+      const profitClass = profit > 0 ? "green" : (profit < 0 ? "red" : "");
+      const result = bet.result || "pending";
+      const linkedTo = bet.linkedTo || "";
 
-    // Recalculate profit (qualifying style default)
-    const adjustedLayOdds = layOdds - (layOdds * commission);
-    const layStake = (backOdds * stake) / adjustedLayOdds;
-    const liability = (layOdds - 1) * layStake;
-    const profit = (backOdds - 1) * stake - liability;
+      // Pending => show Back/Lay buttons
+      // Settled => show Undo button
+      const actions = (result === "pending")
+  ? `
+    <button onclick="settleBet('${id}', 'back')">Back Won</button>
+    <button onclick="settleBet('${id}', 'lay')">Lay Won</button>
+    <button onclick="deleteBet('${id}')">Delete</button>
+  `
+  : `
+    <button onclick="undoBet('${id}')">Undo</button>
+    <button onclick="deleteBet('${id}')">Delete</button>
+  `;
 
-    totalProfit += profit;
+      tableBody.innerHTML += `
+        <tr>
+          <td>${bet.mode || ""}</td>
+          <td>£${(bet.stake ?? "").toString()}</td>
+          <td>${bet.backOdds ?? ""}</td>
+          <td>${bet.layOdds ?? ""}</td>
+          <td>${result}</td>
+          <td><span class="${profitClass}">£${profit.toFixed(2)}</span></td>
+          <td>${actions}</td>
+          <td class="small">${linkedTo}</td>
+        </tr>
+      `;
+    });
 
-    const profitColour = profit >= 0 ? "green" : "red";
-
-    const row = `
-      <tr>
-        <td>${bet.mode}</td>
-        <td>${backOdds}</td>
-        <td>${layOdds}</td>
-        <td>£${stake}</td>
-        <td>${(commission * 100).toFixed(2)}%</td>
-        <td style="color:${profitColour}; font-weight:bold;">
-          £${profit.toFixed(2)}
-        </td>
-        <td>${bet.createdAt?.toDate().toLocaleString() || "-"}</td>
-      </tr>
-    `;
-
-    tableBody.innerHTML += row;
+    const totalClass = totalProfit > 0 ? "green" : (totalProfit < 0 ? "red" : "");
+    totalProfitEl.innerHTML = `Total Profit: <span class="${totalClass}">£${totalProfit.toFixed(2)}</span>`;
   });
-
-  const totalElement = document.getElementById("totalProfit");
-  const totalColour = totalProfit >= 0 ? "green" : "red";
-
-  totalElement.innerHTML =
-    `Total Profit: <span style="color:${totalColour};">£${totalProfit.toFixed(2)}</span>`;
 });
 
-});
+// 🔥 Settle bet (Back Won / Lay Won)
+window.settleBet = async function(betId, outcome) {
+  try {
+    const betRef = doc(db, "bets", betId);
+    const betSnap = await getDoc(betRef);
 
+    if (!betSnap.exists()) {
+      alert("Bet not found.");
+      return;
+    }
+
+    const bet = betSnap.data();
+    const backProfit = Number(bet.backProfit || 0);
+    const layProfit = Number(bet.layProfit || 0);
+
+    const finalProfit = (outcome === "back") ? backProfit : layProfit;
+
+    // If riskfree loses (lay), make it eligible for attaching a free bet in calculator dropdown
+    const eligibleUpdate = (bet.mode === "riskfree" && outcome === "lay")
+      ? { eligibleForFreeBet: true }
+      : { eligibleForFreeBet: false };
+
+    await updateDoc(betRef, {
+      result: outcome,
+      profit: finalProfit,
+      ...eligibleUpdate
+    });
+
+    if (bet.mode === "riskfree" && outcome === "lay") {
+      alert("Risk Free bet lost. Go to calculator → SNR mode → select it in the dropdown to attach free bet.");
+    }
+  } catch (err) {
+    console.error("settleBet failed:", err);
+    alert("Failed to settle bet. Check console.");
+  }
+};
+window.deleteBet = async function(betId) {
+  try {
+    const ok = confirm("Delete this bet? This cannot be undone.");
+    if (!ok) return;
+
+    const betRef = doc(db, "bets", betId);
+    await deleteDoc(betRef);
+  } catch (err) {
+    console.error("deleteBet failed:", err);
+    alert("Failed to delete bet. Check console.");
+  }
+};
+
+// 🔥 Undo bet (go back to pending + default pending profit)
+// Default pending profit:
+// - riskfree => backProfit
+// - others  => min(backProfit, layProfit)
+window.undoBet = async function(betId) {
+  try {
+    const betRef = doc(db, "bets", betId);
+    const betSnap = await getDoc(betRef);
+
+    if (!betSnap.exists()) {
+      alert("Bet not found.");
+      return;
+    }
+
+    const bet = betSnap.data();
+    const backProfit = Number(bet.backProfit || 0);
+    const layProfit = Number(bet.layProfit || 0);
+
+    const defaultPendingProfit = (bet.mode === "riskfree")
+      ? backProfit
+      : Math.min(backProfit, layProfit);
+
+    await updateDoc(betRef, {
+      result: "pending",
+      profit: defaultPendingProfit,
+      eligibleForFreeBet: false
+    });
+  } catch (err) {
+    console.error("undoBet failed:", err);
+    alert("Failed to undo bet. Check console.");
+  }
+};
 </script>
 
 </body>
