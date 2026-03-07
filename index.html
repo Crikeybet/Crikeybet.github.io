@@ -5,11 +5,31 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     body { font-family: Arial; background:#f4f4f4; text-align:center; padding:20px; }
-    .calculator { background:white; padding:20px; border-radius:10px; max-width:420px; margin:auto; box-shadow:0 0 10px rgba(0,0,0,0.1); }
-    input, select, button { width:100%; padding:8px; margin:8px 0; font-size:16px; }
+    .calculator { background:white; padding:20px; border-radius:10px; max-width:520px; margin:auto; box-shadow:0 0 10px rgba(0,0,0,0.1); }
+    input, select, button { width:100%; padding:8px; margin:8px 0; font-size:16px; box-sizing:border-box; }
     button { background:#2c7be5; color:white; border:none; border-radius:5px; cursor:pointer; }
     .result { margin-top:15px; font-weight:bold; text-align:left; }
     .small { font-size:12px; opacity:0.8; text-align:left; }
+    .multi-lay-section {
+      display:none;
+      text-align:left;
+      margin-top:15px;
+      padding-top:10px;
+      border-top:1px solid #ddd;
+    }
+    .outcome-row {
+      border:1px solid #ddd;
+      border-radius:8px;
+      padding:10px;
+      margin-bottom:10px;
+      background:#fafafa;
+    }
+    .remove-outcome-btn {
+      background:#dc3545;
+    }
+    .secondary-btn {
+      background:#6c757d;
+    }
   </style>
 </head>
 <body>
@@ -33,6 +53,7 @@
     <option value="snr">Free Bet (SNR)</option>
     <option value="sr">Free Bet (SR)</option>
     <option value="riskfree">Risk Free Bet</option>
+    <option value="multilay">Bet Builder Multi-Lay</option>
   </select>
 
   <input type="number" id="backOdds" placeholder="Back Odds" step="0.01">
@@ -41,12 +62,20 @@
   <input type="number" id="commission" placeholder="Lay Commission (%)" step="0.01">
   <input type="number" id="freeBetPercent" placeholder="Free Bet Retention % (e.g. 85)" step="0.1">
 
-  <!-- Dropdown only appears in SNR mode -->
   <select id="attachTo" style="display:none;">
     <option value="">Attach to eligible Risk Free bet (optional)</option>
   </select>
   <div class="small" id="attachHelp" style="display:none;">
     Only Risk Free bets settled as <b>Lay Won</b> show here (eligible for free bet).
+  </div>
+
+  <div id="multiLaySection" class="multi-lay-section">
+    <h3>Bet Builder Multi-Lay Outcomes</h3>
+    <div class="small">
+      Enter each outcome you want to lay. Example: Team A 1-0, Team A 2-0, etc.
+    </div>
+    <div id="outcomesContainer"></div>
+    <button type="button" id="addOutcomeBtn" class="secondary-btn">Add Outcome</button>
   </div>
 
   <div class="result" id="output">Enter values to see results</div>
@@ -94,10 +123,9 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 let currentUser = null;
-
-// latest calculated profits
 let lastBackProfit = 0;
 let lastLayProfit = 0;
+let lastMultiLayData = null;
 
 // ================= AUTH =================
 
@@ -141,23 +169,78 @@ onAuthStateChanged(auth, (user) => {
   }
 });
 
-// ================= UI ELEMENTS =================
+// ================= EXISTING UI ELEMENTS =================
 
+const calculator = document.querySelector(".calculator");
 const modeSelect = document.getElementById("mode");
 const attachSelect = document.getElementById("attachTo");
 const attachHelp = document.getElementById("attachHelp");
+const output = document.getElementById("output");
 
-modeSelect.addEventListener("change", () => {
-  if (modeSelect.value === "snr") {
-    attachSelect.style.display = "block";
-    attachHelp.style.display = "block";
-  } else {
-    attachSelect.style.display = "none";
-    attachHelp.style.display = "none";
-    attachSelect.value = "";
-  }
-  calculate();
-});
+const backOddsInput = document.getElementById("backOdds");
+const layOddsInput = document.getElementById("layOdds");
+const stakeInput = document.getElementById("stake");
+const commissionInputEl = document.getElementById("commission");
+const freeBetPercentInputEl = document.getElementById("freeBetPercent");
+const logBetBtn = document.getElementById("logBet");
+
+// add multi-lay mode if it doesn't already exist
+if (![...modeSelect.options].some(option => option.value === "multilay")) {
+  const option = document.createElement("option");
+  option.value = "multilay";
+  option.textContent = "Bet Builder Multi-Lay";
+  modeSelect.appendChild(option);
+}
+
+// ================= CREATE PRESET DROPDOWN + MULTI-LAY SECTION =================
+
+let betBuilderPreset = document.getElementById("betBuilderPreset");
+if (!betBuilderPreset) {
+  betBuilderPreset = document.createElement("select");
+  betBuilderPreset.id = "betBuilderPreset";
+  betBuilderPreset.style.display = "none";
+  betBuilderPreset.innerHTML = `
+    <option value="">Select Bet Builder Preset</option>
+    <option value="none">None</option>
+    <option value="teamA_under25">Team A, Under 2.5 Goals</option>
+    <option value="draw_under25">Draw, Under 2.5 Goals</option>
+    <option value="draw_under45">Draw, Under 4.5 Goals</option>
+    <option value="draw_under45_btts_yes">Draw, Under 4.5 Goals, BTTS - Yes</option>
+    <option value="teamA_under45_btts_yes">Team A, Under 4.5 Goals, BTTS - Yes</option>
+    <option value="teamA_under35_btts_no">Team A, Under 3.5 Goals, BTTS - No</option>
+  `;
+  output.parentNode.insertBefore(betBuilderPreset, output);
+}
+
+let multiLaySection = document.getElementById("multiLaySection");
+let outcomesContainer;
+let addOutcomeBtn;
+
+if (!multiLaySection) {
+  multiLaySection = document.createElement("div");
+  multiLaySection.id = "multiLaySection";
+  multiLaySection.style.display = "none";
+  multiLaySection.style.textAlign = "left";
+  multiLaySection.style.marginTop = "15px";
+  multiLaySection.style.padding = "15px";
+  multiLaySection.style.border = "1px solid #f1b5c2";
+  multiLaySection.style.borderRadius = "8px";
+  multiLaySection.style.background = "#f7dce3";
+
+  multiLaySection.innerHTML = `
+    <h3 style="margin-top:0;">Bet Builder Multi-Lay Outcomes</h3>
+    <div class="small" style="margin-bottom:10px;">
+      Select a preset or add your own outcomes manually.
+    </div>
+    <div id="outcomesContainer"></div>
+    <button type="button" id="addOutcomeBtn" style="background:#2ecc71;">Add New Outcome</button>
+  `;
+
+  output.parentNode.insertBefore(multiLaySection, output);
+}
+
+outcomesContainer = document.getElementById("outcomesContainer");
+addOutcomeBtn = document.getElementById("addOutcomeBtn");
 
 // ================= ELIGIBLE RISKFREE DROPDOWN =================
 
@@ -181,29 +264,266 @@ function startEligibleRiskFreeListener() {
       const b = docSnap.data();
       const opt = document.createElement("option");
       opt.value = docSnap.id;
-      opt.textContent = `Risk Free £${b.stake} @ ${b.backOdds} (ID: ${docSnap.id.slice(0,6)}...)`;
+      opt.textContent = `Risk Free £${b.stake} @ ${b.backOdds} (ID: ${docSnap.id.slice(0, 6)}...)`;
       attachSelect.appendChild(opt);
     });
   });
 }
+
+// ================= MULTI-LAY PRESETS =================
+
+const presetOutcomes = {
+  none: [
+    { name: "", layOdds: "", commission: "0" },
+    { name: "", layOdds: "", commission: "0" }
+  ],
+
+  teamA_under25: [
+    { name: "Team A 1-0", layOdds: "", commission: "0" },
+    { name: "Team A 2-0", layOdds: "", commission: "0" }
+  ],
+
+  draw_under25: [
+    { name: "0-0", layOdds: "", commission: "0" },
+    { name: "1-1", layOdds: "", commission: "0" }
+  ],
+
+  draw_under45: [
+    { name: "0-0", layOdds: "", commission: "0" },
+    { name: "1-1", layOdds: "", commission: "0" },
+    { name: "2-2", layOdds: "", commission: "0" }
+  ],
+
+  draw_under45_btts_yes: [
+    { name: "1-1", layOdds: "", commission: "0" },
+    { name: "2-2", layOdds: "", commission: "0" }
+  ],
+
+  teamA_under45_btts_yes: [
+    { name: "Team A 2-1", layOdds: "", commission: "0" },
+    { name: "Team A 3-1", layOdds: "", commission: "0" }
+  ],
+
+  teamA_under35_btts_no: [
+    { name: "Team A 1-0", layOdds: "", commission: "0" },
+    { name: "Team A 2-0", layOdds: "", commission: "0" },
+    { name: "Team A 3-0", layOdds: "", commission: "0" }
+  ]
+};
+
+function addOutcomeRow(name = "", layOdds = "", commission = "0") {
+  const row = document.createElement("div");
+  row.className = "outcome-row";
+  row.style.display = "grid";
+  row.style.gridTemplateColumns = "1fr 120px 120px 44px";
+  row.style.gap = "10px";
+  row.style.alignItems = "center";
+  row.style.marginBottom = "10px";
+
+  row.innerHTML = `
+    <input type="text" class="outcomeName" placeholder="Outcome" value="${name}">
+    <input type="number" class="outcomeLayOdds" placeholder="Lay Odds" step="0.01" value="${layOdds}">
+    <input type="number" class="outcomeCommission" placeholder="Commission %" step="0.01" value="${commission}">
+    <button type="button" class="removeOutcomeBtn" style="background:#f04f65; padding:8px;">×</button>
+  `;
+
+  row.querySelector(".removeOutcomeBtn").addEventListener("click", () => {
+    row.remove();
+    calculate();
+  });
+
+  row.querySelectorAll("input").forEach(input => {
+    input.addEventListener("input", calculate);
+  });
+
+  outcomesContainer.appendChild(row);
+}
+
+function clearOutcomeRows() {
+  outcomesContainer.innerHTML = "";
+}
+
+function loadPreset(presetKey) {
+  clearOutcomeRows();
+
+  const outcomes = presetOutcomes[presetKey] || presetOutcomes.none;
+
+  outcomes.forEach(outcome => {
+    addOutcomeRow(outcome.name, outcome.layOdds, outcome.commission);
+  });
+
+  calculate();
+}
+
+addOutcomeBtn.addEventListener("click", () => {
+  addOutcomeRow("", "", "0");
+});
+
+betBuilderPreset.addEventListener("change", () => {
+  loadPreset(betBuilderPreset.value);
+});
+
+// initial blank rows
+if (outcomesContainer.children.length === 0) {
+  loadPreset("none");
+}
+
+// ================= MODE DISPLAY =================
+
+function updateModeDisplay() {
+  const isSNR = modeSelect.value === "snr";
+  const isMultiLay = modeSelect.value === "multilay";
+
+  attachSelect.style.display = isSNR ? "block" : "none";
+  attachHelp.style.display = isSNR ? "block" : "none";
+  if (!isSNR) attachSelect.value = "";
+
+  betBuilderPreset.style.display = isMultiLay ? "block" : "none";
+  multiLaySection.style.display = isMultiLay ? "block" : "none";
+
+  layOddsInput.style.display = isMultiLay ? "none" : "block";
+  commissionInputEl.style.display = isMultiLay ? "none" : "block";
+  freeBetPercentInputEl.style.display = isMultiLay ? "none" : "block";
+
+  calculate();
+}
+
+modeSelect.addEventListener("change", updateModeDisplay);
 
 // ================= CALCULATOR =================
 
 function calculate() {
   const mode = modeSelect.value;
 
-  const backOdds = parseFloat(document.getElementById("backOdds").value);
-  const layOdds = parseFloat(document.getElementById("layOdds").value);
-  const stake = parseFloat(document.getElementById("stake").value);
+  const backOdds = parseFloat(backOddsInput.value);
+  const layOdds = parseFloat(layOddsInput.value);
+  const stake = parseFloat(stakeInput.value);
 
-  const commissionInput = parseFloat(document.getElementById("commission").value);
+  const commissionInput = parseFloat(commissionInputEl.value);
   const commission = (isNaN(commissionInput) ? 0 : commissionInput) / 100;
 
-  const freeBetPercentInput = parseFloat(document.getElementById("freeBetPercent").value);
+  const freeBetPercentInput = parseFloat(freeBetPercentInputEl.value);
   const freeBetPercent = isNaN(freeBetPercentInput) ? 0.8 : freeBetPercentInput / 100;
 
-  const output = document.getElementById("output");
+  // reset stored multi-lay calc unless recalculated below
+  lastMultiLayData = null;
 
+  // ================= MULTI-LAY =================
+  if (mode === "multilay") {
+    if (isNaN(backOdds) || isNaN(stake)) {
+      output.innerHTML = "Enter back stake and back odds to see results";
+      lastBackProfit = 0;
+      lastLayProfit = 0;
+      return;
+    }
+
+    const rows = document.querySelectorAll(".outcome-row");
+    const outcomes = [];
+
+    rows.forEach(row => {
+      const name = row.querySelector(".outcomeName").value.trim();
+      const rowLayOdds = parseFloat(row.querySelector(".outcomeLayOdds").value);
+      const rowCommissionInput = parseFloat(row.querySelector(".outcomeCommission").value);
+      const rowCommission = (isNaN(rowCommissionInput) ? 0 : rowCommissionInput) / 100;
+
+      if (name && !isNaN(rowLayOdds) && rowLayOdds > 1) {
+        outcomes.push({
+          name,
+          layOdds: rowLayOdds,
+          commissionRate: rowCommission
+        });
+      }
+    });
+
+    if (outcomes.length === 0) {
+      output.innerHTML = "Select a preset or add at least one valid outcome";
+      lastBackProfit = 0;
+      lastLayProfit = 0;
+      return;
+    }
+
+    const backReturn = stake * backOdds;
+    const backProfit = backReturn - stake;
+
+    let totalLayStake = 0;
+
+    const calculatedOutcomes = outcomes.map(outcome => {
+      const layStake = backReturn / (outcome.layOdds - outcome.commissionRate);
+      const liability = (outcome.layOdds - 1) * layStake;
+
+      totalLayStake += layStake;
+
+      return {
+        name: outcome.name,
+        layOdds: outcome.layOdds,
+        commissionRate: outcome.commissionRate,
+        layStake,
+        liability
+      };
+    });
+
+    let maxExposure = 0;
+    let guaranteedPosition = null;
+
+    calculatedOutcomes.forEach((current, index) => {
+      let otherLayWins = 0;
+
+      calculatedOutcomes.forEach((other, otherIndex) => {
+        if (index !== otherIndex) {
+          otherLayWins += other.layStake * (1 - other.commissionRate);
+        }
+      });
+
+      const exposure = current.liability - otherLayWins;
+      const scenarioProfit = backProfit - current.liability + otherLayWins;
+
+      current.exposure = exposure;
+      current.scenarioProfit = scenarioProfit;
+
+      if (exposure > maxExposure) {
+        maxExposure = exposure;
+      }
+
+      if (guaranteedPosition === null || scenarioProfit < guaranteedPosition) {
+        guaranteedPosition = scenarioProfit;
+      }
+    });
+
+    lastMultiLayData = {
+      backStake: stake,
+      backOdds: backOdds,
+      totalLayStake,
+      totalLiability: maxExposure,
+      guaranteedPosition,
+      outcomes: calculatedOutcomes
+    };
+
+    let resultHtml = "";
+
+    calculatedOutcomes.forEach(outcome => {
+      resultHtml += `
+        <strong>${outcome.name}</strong><br>
+        Lay Odds: ${outcome.layOdds.toFixed(2)}<br>
+        Commission: ${(outcome.commissionRate * 100).toFixed(2)}%<br>
+        Lay Stake: £${outcome.layStake.toFixed(2)}<br>
+        Liability: £${outcome.liability.toFixed(2)}<br>
+        Net Exposure if this happens: £${outcome.exposure.toFixed(2)}<br><br>
+      `;
+    });
+
+    resultHtml += `
+      <strong>Total Lay Stakes:</strong> £${totalLayStake.toFixed(2)}<br>
+      <strong>Guaranteed Overall Position:</strong> £${guaranteedPosition.toFixed(2)}<br>
+      <strong>Total Exchange Liability:</strong> £${maxExposure.toFixed(2)}
+    `;
+
+    output.innerHTML = resultHtml;
+    lastBackProfit = 0;
+    lastLayProfit = 0;
+    return;
+  }
+
+  // ================= SINGLE-LAY MODES =================
   if (isNaN(backOdds) || isNaN(layOdds) || isNaN(stake)) {
     output.innerHTML = "Enter values to see results";
     lastBackProfit = 0;
@@ -211,9 +531,11 @@ function calculate() {
     return;
   }
 
-  let layStake = 0, liability = 0, backWinProfit = 0, layWinProfit = 0;
+  let layStake = 0;
+  let liability = 0;
+  let backWinProfit = 0;
+  let layWinProfit = 0;
 
-  // QUALIFYING
   if (mode === "qualifying") {
     layStake = (backOdds * stake) / (layOdds - commission);
     liability = (layOdds - 1) * layStake;
@@ -221,7 +543,6 @@ function calculate() {
     layWinProfit = layStake * (1 - commission) - stake;
   }
 
-  // FREE BET SNR
   if (mode === "snr") {
     layStake = ((backOdds - 1) * stake) / (layOdds - commission);
     liability = (layOdds - 1) * layStake;
@@ -229,7 +550,6 @@ function calculate() {
     layWinProfit = layStake * (1 - commission);
   }
 
-  // FREE BET SR
   if (mode === "sr") {
     layStake = (backOdds * stake) / (layOdds - commission);
     liability = (layOdds - 1) * layStake;
@@ -237,7 +557,6 @@ function calculate() {
     layWinProfit = layStake * (1 - commission);
   }
 
-  // RISK FREE (your custom formula)
   if (mode === "riskfree") {
     layStake = ((backOdds / layOdds) * stake * layOdds - stake * freeBetPercent) / layOdds;
     liability = (layOdds - 1) * layStake;
@@ -245,7 +564,7 @@ function calculate() {
     const qualifyingLoss = layStake * (1 - commission) - stake;
 
     backWinProfit = (stake * (backOdds - 1) - layStake * (layOdds - 1));
-    layWinProfit = qualifyingLoss; // keep as qualifying loss only
+    layWinProfit = qualifyingLoss;
   }
 
   lastBackProfit = backWinProfit;
@@ -271,41 +590,65 @@ document.getElementById("logBet").addEventListener("click", async () => {
 
   const mode = modeSelect.value;
 
-  const betData = {
-    userId: currentUser.uid,
-    mode: mode,
-    backOdds: parseFloat(document.getElementById("backOdds").value),
-    layOdds: parseFloat(document.getElementById("layOdds").value),
-    stake: parseFloat(document.getElementById("stake").value),
-    commission: parseFloat(document.getElementById("commission").value) / 100 || 0,
-    backProfit: lastBackProfit,
-    layProfit: lastLayProfit,
-    result: "pending",
-    profit: (mode === "riskfree")
-      ? lastBackProfit
-      : Math.min(lastBackProfit, lastLayProfit),
-    createdAt: serverTimestamp(),
-    linkedTo: null,
-    eligibleForFreeBet: false
-  };
-
-  // If SNR and dropdown selected, link to riskfree parent
-  let parentId = null;
-  if (mode === "snr") {
-    parentId = attachSelect.value || null;
-    betData.linkedTo = parentId;
-
-    // If attached to parent, this is a free bet conversion -> we can settle it immediately
-    if (parentId) {
-      betData.result = "settled";
-      betData.profit = lastLayProfit; // guaranteed for SNR
-    }
-  }
-
   try {
+    // MULTI-LAY LOGGING
+    if (mode === "multilay") {
+      if (!lastMultiLayData) {
+        alert("Enter valid multi-lay values first.");
+        return;
+      }
+
+      await addDoc(collection(db, "bets"), {
+        userId: currentUser.uid,
+        mode: "multilay",
+        backOdds: lastMultiLayData.backOdds,
+        stake: lastMultiLayData.backStake,
+        outcomes: lastMultiLayData.outcomes,
+        totalLayStake: lastMultiLayData.totalLayStake,
+        totalLiability: lastMultiLayData.totalLiability,
+        guaranteedPosition: lastMultiLayData.guaranteedPosition,
+        profit: lastMultiLayData.guaranteedPosition,
+        result: "settled",
+        createdAt: serverTimestamp()
+      });
+
+      alert("Multi-lay bet logged ✅");
+      return;
+    }
+
+    // EXISTING SINGLE-LAY LOGGING
+    const betData = {
+      userId: currentUser.uid,
+      mode: mode,
+      backOdds: parseFloat(backOddsInput.value),
+      layOdds: parseFloat(layOddsInput.value),
+      stake: parseFloat(stakeInput.value),
+      commission: parseFloat(commissionInputEl.value) / 100 || 0,
+      backProfit: lastBackProfit,
+      layProfit: lastLayProfit,
+      result: "pending",
+      profit: (mode === "riskfree")
+        ? lastBackProfit
+        : Math.min(lastBackProfit, lastLayProfit),
+      createdAt: serverTimestamp(),
+      linkedTo: null,
+      eligibleForFreeBet: false
+    };
+
+    let parentId = null;
+
+    if (mode === "snr") {
+      parentId = attachSelect.value || null;
+      betData.linkedTo = parentId;
+
+      if (parentId) {
+        betData.result = "settled";
+        betData.profit = lastLayProfit;
+      }
+    }
+
     const newRef = await addDoc(collection(db, "bets"), betData);
 
-    // If attached SNR: DO NOT change parent profit. Only store child ID + remove eligibility.
     if (mode === "snr" && parentId) {
       const parentRef = doc(db, "bets", parentId);
       const parentSnap = await getDoc(parentRef);
@@ -328,6 +671,8 @@ document.getElementById("logBet").addEventListener("click", async () => {
     alert("Error saving bet");
   }
 });
+// initial UI state
+updateModeDisplay();
 </script>
 
 </body>
